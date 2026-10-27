@@ -1,0 +1,39 @@
+{
+  "name": "dsh-tokenforge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TokenForge: a token-efficiency agent preset for DeepSeek Harness (PTC orchestration, compact file tools, output governance).",
+  "license": "MIT",
+  "engines": {
+    "dsh": ">=0.2.0",
+    "node": ">=20.11.0"
+  },
+  "icon": "icon.svg",
+  "main": "./tools.js",
+  "exports": {
+    ".": "./tools.js",
+    "./tools": "./tools.js",
+    "./read-guard": "./read-guard.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "tools.js",
+    "read-guard.js",
+    "lib/*.js",
+    "tools/*.js",
+    "platform/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
