@@ -1,11 +1,8 @@
+[Uploading README.md…]()
 # dsh-tokenforge · 词元锻造
 
 > ⚠️ 警告：本插件为极客工具，仅针对超长日志/上下文有奇效。日常对话无感。请勿用于核心代码重构（可能因截断导致幻觉）。
-> 再次提醒> ⚠️ **免责声明**：本项目为极客实验性工具（Pre-release），仅针对超长日志/大文件有压缩效果。**切勿在处理核心业务逻辑代码时开启！** 目前仅针对 Windows 环境进行过基础测试，Mac/Linux 兼容性未知。遇到问题请提供完整报错截图，否则概不回复。
-> > ⚠️ **免责声明**：本项目完全由 AI 辅助生成（AI-generated code），作者不具备从零手写和深度 Debug 的能力。目前仅处于实验阶段（Pre-release）。如果你遇到崩溃、报错，请在 Issue 中提供完整日志，我会尝试用 AI 重新生成代码来修复，但不保证能 100% 解决问题。**请勿在生产环境、公司核心项目中使用！**
-> >
-> > 如果你的终端提示 'dsh' 不是内部或外部命令，请使用绝对路径安装
-> & "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "C:\Users\abc\Downloads\dsh-tokenforge-1.0.0.tgz"
+
 ## 适用与不适用
 
 | 场景 | 建议 |
@@ -16,14 +13,14 @@
 
 面向 **DeepSeek Harness**（`dsh >= 0.2.0`、`node >= 20.11.0`）的 token 效率插件。安装后立即获得一个**全局读守卫**：任何超过 100K 字符的 `read` 结果，在进入模型上下文前被压成“头 + 尾 + 省略标记”；再选用可选的 `tokenforge` 预设，获得 PTC 批量工具与完整的输出治理。
 
-`DSH >= 0.2.0` · `Node >= 20.11.0` · `v1.0.0` · `MIT`
+`DSH >= 0.2.0` · `Node >= 20.11.0` · `v1.0.1` · `MIT`
 
 ## 两层机制
 
 | 层 | 是否默认 | 作用 |
 |---|---|---|
 | **全局读守卫**（`tokenforge-read-guard`） | **安装即生效** | 拦截宿主 `read` 工具的结果，超过阈值时压缩；不改变磁盘读取、不改变沙箱、不改权限。 |
-| **TokenForge 预设**（`tokenforge`） | 可选 | PTC 批量编排、`tf_read`/`tf_grep`/`tf_glob`/`tf_result`/`tf_stats`、shell 与 web 输出治理。 |
+| **TokenForge 预设**（`tokenforge`） | 可选 | PTC 批量编排、`tf_read`/`tf_grep`/`tf_glob`/`tf_stats`、按 `offset`/`limit` 的物理分页、shell 与 web 输出治理。 |
 
 两层互不依赖：不选预设也能享受读守卫；选了预设则获得完整的省流工具面。预设内原生 `read` 被关闭，因此不会和全局守卫重复处理。
 
@@ -32,7 +29,7 @@
 - **几百 MB 日志**：`read` 结果先压到 12K 字符以内，模型看到头尾、行号与省略标记，不会因为上下文截断而“断片”。
 - **大文件**：预设下只读需要的行区间，不把整文件灌进上下文。
 - **多模块审计**：一个 `run_code` 程序里并行发起几十次读取/搜索，中间结果留在程序内，只回传结论。
-- **可核对**：`tf_stats` 给出本会话的工具调用、缓存状态与可归因节省量。
+- **可核对**：`tf_stats` 给出本会话的工具调用、分页读取量与可归因节省量。
 
 ## 架构
 
@@ -52,8 +49,8 @@ flowchart LR
     FS --> CR[紧凑结果]
     CR -->|只回传结论| M
     T[tools/post-execute] --> O[输出治理]
-    O --> S[spill 缓存]
-    S -->|tf_result 分页| P
+    O --> TR[字节预算截断]
+    TR -->|offset / limit 续读| P
     M -->|tf_stats| Q2[用量与节省回执]
   end
 ```
@@ -66,12 +63,11 @@ flowchart LR
 | `tools/tf-*.js` | 每个工具一个模块，导出 `schema` 与 `createHandler(runtime)` |
 | `tools/index.js` | 工具注册表：校验、组装 `ToolDefinition`、注册 |
 | `lib/config.js` | 预设配置默认值与边界 |
-| `lib/runtime.js` | 会话级状态（缓存/统计）与 `cwd`/`sessionId` 绑定 |
+| `lib/runtime.js` | 会话级状态（统计）与 `cwd`/`sessionId` 绑定 |
 | `lib/governor.js` | 预设内 shell/web 输出治理 |
 | `lib/policy.js` | 系统提示词策略（纯数据） |
 | `lib/compact.js` | 压缩、行号、ANSI、token 估算（纯函数） |
 | `lib/fs-walk.js` | `ctx.fs` 遍历、glob、敏感路径、UTF-16 还原 |
-| `lib/spill-cache.js` | 会话级 LRU 缓存 |
 | `lib/stats.js` | 会话计数器 |
 | `platform/index.js` | 平台白名单与 shell 选择 |
 
@@ -86,7 +82,7 @@ flowchart LR
 - **零系统副作用**：运行时不调用 `child_process`、不直接 import `fs`、不做 `chmod`/`chown`/`icacls`/`Set-Acl`。
 - **编码**：优先通过 `ctx.fs.readBytes` 读取原始字节，按 BOM / UTF-8 / UTF-16 / GBK 顺序嗅探；低置信度直接报 `Unsupported Encoding`，绝不返回乱码。
 - **安全边界**：预设内 `tf_read`/`tf_grep` 默认跳过 `.ssh`、`.aws`、`.gnupg`、`.kube`、`.docker` 与 `.env*`、私钥、`.npmrc`、`secrets.json` 等；**全局读守卫不做路径判定**，敏感路径的最终放行仍由宿主沙箱决定。
-- **并发**：`SpillCache` / `StatsBook` 为事件循环上的同步操作，不需要 Mutex；LRU 淘汰后 `tf_result` 对未知 id 返回错误。
+- **无状态分页**：`tf_read` 不维护跨调用的结果缓存，每次只按 `offset`/`limit` 返回磁盘上的物理行区间；截断提示直接写在返回文本里，进程重启后行为不变。
 
 ## 安装
 
@@ -99,7 +95,7 @@ dsh plugin --profile <profile> add <产品目录>\tokenforge
 ```powershell
 cd <产品目录>\tokenforge
 npm pack
-dsh plugin --profile <profile> add .\dsh-tokenforge-1.0.0.tgz
+dsh plugin --profile <profile> add .\dsh-tokenforge-1.0.1.tgz
 ```
 
 安装或更新后：
@@ -113,11 +109,29 @@ dsh plugin --profile <profile> add .\dsh-tokenforge-1.0.0.tgz
 
 | 工具 | 参数 | 返回 |
 |---|---|---|
-| `tf_read` | `requests: [{ path, offset?, limit? }]`（1–8 个） | 带行号的文件片段；大结果进入 `tf_result` 缓存。 |
+| `tf_read` | `requests: [{ path, offset?, limit? }]`（1–8 个） | 带行号的文件片段；超出预算时在物理行边界截断，用 `offset` 续读。 |
 | `tf_grep` | `pattern, path?, include?, mode?: summary\|count\|content, maxFiles?, maxMatches?, caseSensitive?` | 文件/命中计数或命中行。 |
 | `tf_glob` | `pattern: string\|string[], path?, maxResults?, details?` | 相对路径列表，支持 `**`、`*`、`?`、`{a,b}`。 |
-| `tf_result` | `id, offset?, limit?` | 分页读取被治理/截断的完整结果。 |
-| `tf_stats` | 无 | 会话 token 估算、工具调用、可归因节省、缓存状态。 |
+| `tf_stats` | 无 | 会话 token 估算、工具调用、可归因节省、分页读取量。 |
+
+## 物理分页读取（offset / limit）
+
+`tf_read` 是纯读取器：每次调用只取文件里一段**物理行区间**，返回带行号前缀的文本。没有隐藏的结果缓存，也没有“先存后取”的二次读取。
+
+- `offset` 从 1 开始；`limit` 不超过 `readMaxLines`（默认 2000）。
+- 单文件渲染超过 `readMaxCharsPerFile`（默认 32768）、或单次总量超过 `readMaxCharsTotal`（默认 49152）时，在**行边界**截断。
+- 截断处直接写明剩余量，例如 `[... 583 more lines truncated; narrow the range ...]`，下一步该用哪个 `offset` 一目了然。
+- 续读只需 `offset = 上一段末行号 + 1`；多个区间可在同一次调用的 `requests` 数组里并行发起。
+
+因为不依赖缓存，分页是**确定性**的：同样的 `offset`/`limit` 在任何进程、任何会话都返回同一段文本。被截掉的部分永远可以直接从磁盘续读，而不是从某个可能已被淘汰的缓存里捞。
+
+```
+tf_read({ requests: [
+  { path: 'app.log', offset: 1,    limit: 2000 },   // 1-2000
+  { path: 'app.log', offset: 2001, limit: 2000 },   // 2001-2657，末段自动收窄
+  { path: 'app.log', offset: 2658, limit: 2000 },   // 越界：空区间，不报错
+] })
+```
 
 ## 配置
 
@@ -194,7 +208,7 @@ dsh plugin --profile <profile> add .\dsh-tokenforge-1.0.0.tgz
 按顺序排查：
 
 1. **阈值**：全局守卫只处理 `read` 结果中超过 `102400` 字符的内容；小文件本来就不会被改动。把 `thresholdChars` 临时调到 `100` 可以验证链路。
-2. **预设**：`tf_read`/`tf_grep`/`tf_glob`/`tf_result`/`tf_stats` 只存在于 TokenForge 预设里。没选预设时看不到它们是正常的。
+2. **预设**：`tf_read`/`tf_grep`/`tf_glob`/`tf_stats` 只存在于 TokenForge 预设里。没选预设时看不到它们是正常的。
 3. **安装位置**：确认当前 profile 的 `cordis.patch.yml` 里存在 `tokenforge-read-guard` 行；改的是别的 profile 就不会生效。
 4. **仍然无输出**：贴 `tf_stats`（预设下）和宿主日志开 issue，不要只写“没反应”。
 
@@ -317,7 +331,7 @@ export function createHandler(runtime) {
 - 全局读守卫依赖 `tools/post-execute`，只能压缩“结果进入上下文前”的内容，**不能阻止宿主读盘**；真正的文件访问控制属于 `ctx.fs` 与沙箱。
 - PTC 依赖模型能写 TypeScript 程序；不支持 PTC 时 preset 不应启用。
 - 22.03× / 70.88× / 99.94% 是固定基准的机制结果，不是普遍保证；压缩有损，复杂分析请提高阈值或关闭。
-- 缓存只在当前 Host 进程/会话；进程重启后旧 `tf_result` id 失效。
+- 分页只由 `offset`/`limit` 决定，不依赖任何进程内缓存；同一次读取在进程重启后仍可复现。
 - 符号链接别名到敏感文件的最终放行仍由 `ctx.fs` 沙箱决定；目录遍历会跳过符号链接。
 - 当前实现只在单 Host 进程内使用；未来 Worker/多线程需额外同步。
 - 包仍为 `private: true`，作为本地插件分发；如需发布到 npm，先移除该字段并补 `publishConfig`。
