@@ -7,7 +7,7 @@
       name: 'dsh-tokenforge/read-guard'
       config:
         enabled: true
-        thresholdChars: 102400
+        thresholdChars: 500000
 
     - id: preset-tokenforge
       name: '@deepseek-ai/dsh-agent-preset'
@@ -33,9 +33,12 @@
           - id: time-context
             name: '@deepseek-ai/dsh-time-context'
 
-          - id: tokenforge-tools
-            name: 'dsh-tokenforge/tools'
-
+          - - id: tokenforge-tools
+  name: 'dsh-tokenforge/tools'
+  config:
+    governor:
+      thresholdChars: 5000
+      tools: ['tf_read', 'tf_grep', 'tf_glob', 'pwsh', 'web_fetch', 'web_search']
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
             config:
@@ -88,4 +91,4 @@
                 config:
                   thresholdChars: 8192
                   headChars: 4096
-                  tailChars: 1024
+                  tailChars: 5000
